@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "expo.vscode-expo-tools",
+    "byCedric.expo-tools",
+    "msjsdiag.vscode-react-native",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "PKief.material-icon-theme",
+    "usernamehw.errorlens",
+    "bradlc.vscode-tailwindcss"
+  ]
+}
