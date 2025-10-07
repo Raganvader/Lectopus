@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "Lectopus",
+    "name": "",
     "slug": "Lectopus",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/logo3.png",
     "scheme": "lectopus",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/logo3.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -18,7 +18,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/logo1.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -27,13 +27,9 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/logo1.png"
     },
-    "plugins": [
-      "expo-router",
-      "expo-font",
-      "expo-web-browser"
-    ],
+    "plugins": ["expo-router", "expo-font", "expo-web-browser"],
     "experiments": {
       "typedRoutes": true
     }
