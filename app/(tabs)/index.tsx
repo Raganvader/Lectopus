@@ -9,36 +9,34 @@ import {
   View,
 } from "react-native";
 
-import { fetchBooks } from "@/services/api";
+import { fetchPopularBooks } from "@/services/api";
 import useFetch from "@/services/useFetch";
 
 import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 
-import SearchBar from "@/components/SearchBar";
-// ↓ Bunları film örneğindeki MovieCard/TrendingCard gibi oluşturmalısın
 import BookCard from "@/components/BookCard";
+import SearchBar from "@/components/SearchBar";
 import TrendingBookCard from "@/components/TrendingBookCard";
 
 const Index = () => {
   const router = useRouter();
 
-  // TMDB'deki "getTrendingMovies" yerine:
+  // SADECE meşhur/popüler: klasikler + dil önceliği TR -> EN
   const {
-    data: trendingBooks,
-    loading: trendingLoading,
-    error: trendingError,
-  } = useFetch(() => fetchBooks({ query: "bestsellers" }));
+    data: popular,
+    loading,
+    error,
+  } = useFetch(() =>
+    fetchPopularBooks({
+      subject: "classic",
+      langPriority: ["tr", "en"],
+      maxResults: 24,
+    })
+  );
 
-  // TMDB'deki "fetchMovies({query:''})" yerine:
-  const {
-    data: books,
-    loading: booksLoading,
-    error: booksError,
-  } = useFetch(() => fetchBooks({ query: "" })); // api.ts boşta newest + bestsellers çekiyor
-
-  const trending = Array.isArray(trendingBooks) ? trendingBooks : [];
-  const latest = Array.isArray(books) ? books : [];
+  const trending = Array.isArray(popular) ? popular.slice(0, 10) : [];
+  const famous = Array.isArray(popular) ? popular : [];
 
   return (
     <View className="flex-1 bg-primary">
@@ -55,22 +53,18 @@ const Index = () => {
       >
         <Image source={icons.logo} className="w-12 h-10 mt-20 mb-5 mx-auto" />
 
-        {booksLoading || trendingLoading ? (
+        {loading ? (
           <ActivityIndicator
             size="large"
             color="#0000ff"
             className="mt-10 self-center"
           />
-        ) : booksError || trendingError ? (
-          <Text className="text-red-400">
-            Error: {String(booksError?.message || trendingError?.message)}
-          </Text>
+        ) : error ? (
+          <Text className="text-red-400">Error: {error?.message}</Text>
         ) : (
           <View className="flex-1 mt-5">
             <SearchBar
-              onPress={() => {
-                router.push("/search");
-              }}
+              onPress={() => router.push("/search")}
               placeholder="Kitap, yazar veya tür ara..."
             />
 
@@ -87,11 +81,7 @@ const Index = () => {
                   data={trending}
                   contentContainerStyle={{ gap: 26 }}
                   renderItem={({ item, index }) => (
-                    <TrendingBookCard
-                      // Google Books item
-                      data={item}
-                      index={index}
-                    />
+                    <TrendingBookCard data={item} index={index} />
                   )}
                   keyExtractor={(item, idx) => String(item?.id ?? idx)}
                   ItemSeparatorComponent={() => <View className="w-4" />}
@@ -101,15 +91,12 @@ const Index = () => {
 
             <>
               <Text className="text-lg text-white font-bold mt-5 mb-3">
-                Son Çıkan Kitaplar
+                Meşhur Kitaplar
               </Text>
 
               <FlatList
-                data={latest}
-                renderItem={({ item }) => (
-                  // MovieCard yerine BookCard
-                  <BookCard book={item} />
-                )}
+                data={famous}
+                renderItem={({ item }) => <BookCard {...item} />}
                 keyExtractor={(item, idx) => String(item?.id ?? idx)}
                 numColumns={3}
                 columnWrapperStyle={{
@@ -119,7 +106,7 @@ const Index = () => {
                   marginBottom: 10,
                 }}
                 className="mt-2 pb-32"
-                // ScrollView içinde uyarı vermesin
+                // ScrollView içinde sanal liste uyarısını önlemek için
                 scrollEnabled={false}
               />
             </>
