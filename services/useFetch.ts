@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 
-const useFetch = (fetchFunction: () => Promise<T>, autoFetch = true) => {
+const useFetch = <T>(fetchFunction: () => Promise<T>, autoFetch = true) => {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +18,7 @@ const useFetch = (fetchFunction: () => Promise<T>, autoFetch = true) => {
       const result = await fetchFunction();
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error("Bilinmeyen hata"));
+      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
       setLoading(false);
     }
