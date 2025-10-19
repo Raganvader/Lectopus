@@ -96,7 +96,7 @@ const Index = () => {
 
               <FlatList
                 data={famous}
-                renderItem={({ item }) => <BookCard {...item} />}
+                renderItem={({ item }) => <BookCard book={item} />}
                 keyExtractor={(item, idx) => String(item?.id ?? idx)}
                 numColumns={3}
                 columnWrapperStyle={{
