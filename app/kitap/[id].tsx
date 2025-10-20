@@ -1,9 +1,10 @@
 // app/kitap/[id].tsx
+import * as Linking from "expo-linking"; // ✅ Tip güvenli import
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  Linking,
   ScrollView,
   Text,
   TouchableOpacity,
@@ -12,132 +13,166 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { icons } from "@/constants/icons";
-import { fetchBookDetails, type BookDetails } from "@/services/api";
+import { fetchBookDetails } from "@/services/api";
+import { translateText } from "@/services/translate"; // DeepL çeviri servisi
 import useFetch from "@/services/useFetch";
 
-const BilgiSatiri = ({
-  etiket,
-  deger,
-}: {
-  etiket: string;
-  deger?: string | null;
-}) =>
-  deger ? (
-    <View className="mt-5">
-      <Text className="text-light-200 font-normal text-sm">{etiket}</Text>
-      <Text className="text-light-100 font-bold text-sm mt-2">{deger}</Text>
-    </View>
-  ) : null;
+// HTML etiketlerini temizler (ör. <p>, <b> vs.)
+function stripHtml(html?: string | null) {
+  if (!html) return "";
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+\n/g, "\n")
+    .trim();
+}
 
-const KitapDetayEkrani = () => {
+// Bilgi satırı bileşeni
+const InfoRow = ({ label, value }: { label: string; value?: string }) => (
+  <View className="flex-col items-start justify-center mt-5">
+    <Text className="text-light-200 font-normal text-sm">{label}</Text>
+    <Text className="text-light-100 font-bold text-sm mt-2">
+      {value || "Bilgi yok"}
+    </Text>
+  </View>
+);
+
+export default function BookDetails() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
 
-  const {
-    data: kitap,
-    loading,
-    error,
-  } = useFetch<BookDetails>(() => fetchBookDetails(String(id)));
+  // Kitap verisini getir
+  const { data: book, loading } = useFetch(() =>
+    fetchBookDetails(id as string)
+  );
+
+  const [translatedDesc, setTranslatedDesc] = useState("");
+
+  // Açıklama metni (öncelik sırası)
+  const descriptionOriginal = useMemo(() => {
+    return (
+      book?.description ||
+      (book as any)?.searchInfo?.textSnippet ||
+      "Bilgi bulunamadı"
+    );
+  }, [book]);
+
+  // Açıklamayı Türkçeye çevir
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      if (!descriptionOriginal) {
+        setTranslatedDesc("");
+        return;
+      }
+
+      try {
+        const tr = await translateText({
+          text: descriptionOriginal,
+          targetLang: "TR",
+        });
+
+        if (!cancelled) setTranslatedDesc(tr);
+      } catch (err) {
+        console.warn("Çeviri başarısız:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [descriptionOriginal]);
 
   if (loading)
     return (
-      <SafeAreaView className="bg-primary flex-1 justify-center items-center">
-        <ActivityIndicator size="large" color="#ab8bff" />
-        <Text className="text-light-200 mt-3">Yükleniyor...</Text>
+      <SafeAreaView className="bg-primary flex-1">
+        <ActivityIndicator color="#ab8bff" size="large" />
       </SafeAreaView>
     );
 
-  if (error)
-    return (
-      <SafeAreaView className="bg-primary flex-1 justify-center items-center px-5">
-        <Text className="text-red-400 text-center">
-          Kitap detayları alınamadı: {String(error)}
-        </Text>
-        <TouchableOpacity
-          className="mt-4 bg-accent rounded-lg px-4 py-2"
-          onPress={router.back}
-        >
-          <Text className="text-white font-semibold">Geri Dön</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
+  // Açıklamayı temizle ve gösterilecek metni belirle
+  const cleanDesc =
+    stripHtml(translatedDesc || descriptionOriginal) || "Bilgi bulunamadı";
 
   return (
     <View className="bg-primary flex-1">
-      <ScrollView contentContainerStyle={{ paddingBottom: 90 }}>
-        {/* Kapak */}
-        <Image
-          source={{
-            uri:
-              kitap?.cover_url ||
-              "https://placehold.co/600x800/1a1a1a/FFFFFF?text=Kapak+Yok",
-          }}
-          className="w-full h-[520px]"
-          resizeMode="cover"
-        />
+      <ScrollView contentContainerStyle={{ paddingBottom: 80 }}>
+        {/* Kapak resmi */}
+        <View>
+          <Image
+            source={{
+              uri:
+                book?.cover_url ||
+                "https://placehold.co/400x600/1a1a1a/FFFFFF?text=No+Cover",
+            }}
+            className="w-full h-[550px]"
+            resizeMode="stretch"
+          />
 
-        {/* Kitap Bilgileri */}
-        <View className="px-5 mt-5">
-          <Text className="text-white font-bold text-2xl">
-            {kitap?.title ?? "Adsız Kitap"}
-          </Text>
+          {/* Geri dön butonu */}
+          <TouchableOpacity
+            className="absolute bottom-5 right-5 rounded-full size-14 bg-white flex items-center justify-center"
+            onPress={router.back}
+          >
+            <Image
+              source={icons.arrow}
+              className="size-6 rotate-180"
+              resizeMode="contain"
+              tintColor="#000"
+            />
+          </TouchableOpacity>
+        </View>
 
-          {/* Yazar */}
-          {kitap?.authors?.length ? (
+        {/* Kitap bilgileri */}
+        <View className="flex-col items-start justify-center mt-5 px-5">
+          <Text className="text-white font-bold text-xl">{book?.title}</Text>
+
+          {book?.authors && (
             <Text className="text-light-200 text-sm mt-2">
-              {kitap.authors.join(", ")}
+              {book.authors.join(", ")}
             </Text>
-          ) : null}
+          )}
 
-          {/* Yayın yılı */}
-          {kitap?.published_year ? (
-            <Text className="text-light-200 text-sm mt-2">
-              Yayın Yılı: {kitap.published_year}
-            </Text>
-          ) : null}
-
-          {/* Açıklama */}
-          <BilgiSatiri etiket="Açıklama" deger={kitap?.description ?? ""} />
-
-          {/* Diğer bilgiler */}
-          <BilgiSatiri
-            etiket="Kategoriler"
-            deger={
-              kitap?.categories?.length ? kitap.categories.join(" • ") : ""
-            }
-          />
-          <BilgiSatiri
-            etiket="Sayfa Sayısı"
-            deger={
-              typeof kitap?.pageCount === "number"
-                ? `${kitap.pageCount} sayfa`
-                : ""
-            }
-          />
-          <BilgiSatiri etiket="Yayınevi" deger={kitap?.publisher ?? ""} />
-          <BilgiSatiri
-            etiket="Dil"
-            deger={
-              kitap?.language?.toLowerCase() === "tr"
-                ? "Türkçe"
-                : kitap?.language?.toUpperCase() ?? ""
-            }
+          <InfoRow
+            label="Yayın Yılı"
+            value={book?.published_year || "Bilinmiyor"}
           />
 
-          {kitap?.previewLink && (
+          <InfoRow label="Açıklama" value={cleanDesc} />
+
+          {book?.categories && (
+            <InfoRow label="Kategoriler" value={book.categories.join(" • ")} />
+          )}
+
+          {book?.pageCount && (
+            <InfoRow label="Sayfa Sayısı" value={`${book.pageCount} sayfa`} />
+          )}
+
+          {book?.publisher && (
+            <InfoRow label="Yayınevi" value={book.publisher} />
+          )}
+
+          {book?.language && (
+            <InfoRow label="Dil" value={book.language.toUpperCase()} />
+          )}
+
+          {book?.previewLink ? (
             <TouchableOpacity
-              className="mt-6 bg-accent rounded-lg px-4 py-2"
-              onPress={() => Linking.openURL(kitap.previewLink!)}
+              className="mt-5 bg-accent rounded-lg py-3.5 flex flex-row items-center justify-center"
+              onPress={() => {
+                const url = book.previewLink; // ✅ url kesin string mi?
+                if (url) Linking.openURL(url); // ✅ guard ile tipi garanti ettik
+              }}
             >
-              <Text className="text-white text-center font-semibold">
+              <Text className="text-white font-semibold text-base">
                 Kitabı Google Books’ta Aç
               </Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
       </ScrollView>
 
-      {/* Geri Butonu */}
+      {/* Geri Dön butonu */}
       <TouchableOpacity
         className="absolute bottom-5 left-0 right-0 mx-5 bg-accent rounded-lg py-3.5 flex flex-row items-center justify-center z-50"
         onPress={router.back}
@@ -151,6 +186,4 @@ const KitapDetayEkrani = () => {
       </TouchableOpacity>
     </View>
   );
-};
-
-export default KitapDetayEkrani;
+}
