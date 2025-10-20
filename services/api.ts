@@ -5,26 +5,85 @@ export const GOOGLE_BOOKS_CONFIG = {
   headers: { accept: "application/json" },
 };
 
-// Uygulamanın kullandığı tip
+// Kitap tipi
 export type Book = {
   id: string;
   title: string;
   cover_url: string | null;
-  rating: number; // 0–5
-  published_year?: string; // "1910"
+  rating: number;
+  published_year?: string;
 };
 
+// Detay tipi
+export type BookDetails = {
+  id: string;
+  title: string;
+  cover_url: string | null;
+  authors: string[];
+  description?: string | null;
+  categories?: string[];
+  pageCount?: number;
+  publisher?: string | null;
+  published_year?: string | null;
+  language?: string | null;
+  previewLink?: string | null;
+};
+
+// Yardımcı fonksiyonlar
+const toHttps = (u?: string | null) =>
+  u ? u.replace(/^http:/, "https:") : null;
+const stripHtml = (html?: string | null) =>
+  (html ?? "")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+// Listeleme için map
 function mapGoogleItemToBook(item: any): Book {
   const v = item?.volumeInfo || {};
-  const title = v.title || "Adsız kitap";
+  const title = v.title || "Adsız Kitap";
   const img = v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail || null;
-  const cover_url = img ? img.replace(/^http:/, "https:") : null;
+  const cover_url = toHttps(img);
   const rating = typeof v.averageRating === "number" ? v.averageRating : 0;
   const year = (v.publishedDate || "").match(/\d{4}/)?.[0];
   return { id: item.id, title, cover_url, rating, published_year: year };
 }
 
-// Serbest arama (istersen kullan)
+// 📘 Kitap detayları (tek kitap)
+export const fetchBookDetails = async (
+  bookId: string
+): Promise<BookDetails> => {
+  const url = `${GOOGLE_BOOKS_CONFIG.BASE_URL}/volumes/${bookId}?key=${GOOGLE_BOOKS_CONFIG.API_KEY}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: GOOGLE_BOOKS_CONFIG.headers,
+  });
+
+  if (!res.ok) throw new Error("Kitap detayları alınamadı");
+
+  const data = await res.json();
+  const v = data?.volumeInfo ?? {};
+
+  return {
+    id: data?.id ?? bookId,
+    title: v.title ?? "Adsız Kitap",
+    cover_url: toHttps(
+      v.imageLinks?.thumbnail ?? v.imageLinks?.smallThumbnail ?? null
+    ),
+    authors: Array.isArray(v.authors) ? v.authors : [],
+    description: stripHtml(v.description ?? ""),
+    categories: Array.isArray(v.categories) ? v.categories : [],
+    pageCount: typeof v.pageCount === "number" ? v.pageCount : undefined,
+    publisher: v.publisher ?? null,
+    published_year: (v.publishedDate || "").match(/\d{4}/)?.[0] ?? null,
+    language: v.language ?? null,
+    previewLink: v.previewLink ?? null,
+  };
+};
+
+// 🔍 Arama (Türkçe öncelikli)
 export const fetchBooks = async ({
   query,
 }: {
@@ -34,22 +93,22 @@ export const fetchBooks = async ({
   const endpoint = q
     ? `${GOOGLE_BOOKS_CONFIG.BASE_URL}/volumes?q=${encodeURIComponent(
         q
-      )}&orderBy=relevance&printType=books&maxResults=20&key=${
+      )}&langRestrict=tr&orderBy=relevance&printType=books&maxResults=20&key=${
         GOOGLE_BOOKS_CONFIG.API_KEY
       }`
-    : `${GOOGLE_BOOKS_CONFIG.BASE_URL}/volumes?q=subject:books&orderBy=relevance&printType=books&maxResults=20&key=${GOOGLE_BOOKS_CONFIG.API_KEY}`;
+    : `${GOOGLE_BOOKS_CONFIG.BASE_URL}/volumes?q=subject:books&langRestrict=tr&orderBy=relevance&printType=books&maxResults=20&key=${GOOGLE_BOOKS_CONFIG.API_KEY}`;
 
   const res = await fetch(endpoint, { headers: GOOGLE_BOOKS_CONFIG.headers });
-  if (!res.ok) throw new Error(`Failed to fetch books: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Kitaplar getirilemedi: ${res.statusText}`);
   const data = await res.json();
   const items = Array.isArray(data?.items) ? data.items : [];
   return items.map(mapGoogleItemToBook);
 };
 
-// ✅ POPÜLER/MEŞHUR (subject + relevance, dil önceliği)
+// ⭐ Popüler kitaplar (önce Türkçe)
 export const fetchPopularBooks = async ({
-  subject = "classic|literature", // classic veya literature
-  langPriority = ["en", "tr"], // önce EN, sonra TR (daha sağlam meta)
+  subject = "roman|edebiyat",
+  langPriority = ["tr", "en"],
   maxResults = 24,
 }: {
   subject?: string;
@@ -57,27 +116,21 @@ export const fetchPopularBooks = async ({
   maxResults?: number;
 }): Promise<Book[]> => {
   let results: Book[] = [];
-
   for (const lang of langPriority) {
     const url =
       `${GOOGLE_BOOKS_CONFIG.BASE_URL}/volumes` +
-      `?q=subject:${encodeURIComponent(subject)}` + // classic|literature
-      `&orderBy=relevance` +
-      `&printType=books` +
-      `&projection=full` + // kapak/başlık için daha güvenilir
+      `?q=subject:${encodeURIComponent(subject)}` +
+      `&langRestrict=${lang}` +
+      `&orderBy=relevance&printType=books&projection=full` +
       `&maxResults=${Math.min(40, maxResults)}` +
-      (lang ? `&langRestrict=${lang}` : ``) +
-      // Yalnız ihtiyacımız olan alanları iste (partial response)
       `&fields=items(id,volumeInfo(title,imageLinks/thumbnail,imageLinks/smallThumbnail,publishedDate,averageRating)),totalItems` +
       `&key=${GOOGLE_BOOKS_CONFIG.API_KEY}`;
 
     const r = await fetch(url, { headers: GOOGLE_BOOKS_CONFIG.headers });
     if (!r.ok) continue;
-
     const data = await r.json();
     const items = Array.isArray(data?.items) ? data.items : [];
     results = results.concat(items.map(mapGoogleItemToBook));
-
     if (results.length >= maxResults) break;
   }
 
