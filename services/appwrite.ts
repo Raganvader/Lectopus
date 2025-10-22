@@ -1,116 +1,260 @@
 // services/appwrite.ts
-import Constants from "expo-constants";
-import { Platform } from "react-native";
-import { Client, Databases, ID, Query } from "react-native-appwrite";
+import {
+  Account,
+  Client,
+  Databases,
+  ID,
+  Permission,
+  Query,
+  Role,
+} from "react-native-appwrite";
 import "react-native-url-polyfill/auto";
+import type { Book } from "./api";
 
-/** ENV */
+/* ──────────────────────────────────────────────
+   ENV DEĞERLERİ (.env dosyasına göre)
+────────────────────────────────────────────── */
 const ENDPOINT = process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT!;
 const PROJECT_ID = process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID!;
 const DATABASE_ID = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID!;
-const TABLE_ID = process.env.EXPO_PUBLIC_APPWRITE_TABLE_ID!; // metrics tablosu
+const METRICS_TABLE_ID = process.env.EXPO_PUBLIC_APPWRITE_TABLE_ID!; // örn: "metrics"
+const SAVED_TABLE_ID =
+  process.env.EXPO_PUBLIC_APPWRITE_SAVED_TABLE_ID || "saved"; // örn: "saved"
 
-/** Client (Expo uyumlu platform tanımı) */
-const client = new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID);
-const devPlatform =
-  Platform.select({ ios: "host.exp.Exponent", android: "host.exp.exponent" }) ??
-  "host.exp.Exponent";
-const releasePlatform =
-  Constants?.expoConfig?.ios?.bundleIdentifier ||
-  Constants?.expoConfig?.android?.package ||
-  "com.jsm.lectopus";
+/* ──────────────────────────────────────────────
+   CLIENT OLUŞTURMA
+────────────────────────────────────────────── */
+export const appwrite = new Client()
+  .setEndpoint(ENDPOINT)
+  .setProject(PROJECT_ID);
 
-client.setPlatform(__DEV__ ? devPlatform : releasePlatform);
+export const account = new Account(appwrite);
+export const databases = new Databases(appwrite);
 
-export const databases = new Databases(client);
+/* ──────────────────────────────────────────────
+   HELPER FONKSİYONLAR
+────────────────────────────────────────────── */
+const PLACEHOLDER = "https://placehold.co/400x600/1a1a1a/FFFFFF?text=No+Cover";
 
-/** Google Books -> normalize yardımcıları */
-const FALLBACK_POSTER =
-  "https://placehold.co/400x600/1a1a1a/FFFFFF?text=No+Cover";
+function httpsify(url?: string | null): string | null {
+  if (!url) return null;
+  return url.startsWith("http://")
+    ? url.replace(/^http:\/\//, "https://")
+    : url;
+}
 
-type GBItemLoose = {
-  id?: string;
-  title?: string;
-  image?: string;
-  volumeInfo?: {
-    title?: string;
-    imageLinks?: { thumbnail?: string; smallThumbnail?: string };
+function normalizeForMetrics(b: Book) {
+  return {
+    id: String(b.id ?? ""),
+    title: b.title ?? "Adsız kitap",
+    poster: httpsify(b.cover_url ?? null) ?? PLACEHOLDER,
   };
+}
+
+/* ──────────────────────────────────────────────
+   AUTH YARDIMCILARI
+────────────────────────────────────────────── */
+export async function getCurrentUser() {
+  try {
+    return await account.get();
+  } catch {
+    return null;
+  }
+}
+
+export async function logout() {
+  try {
+    await account.deleteSessions();
+  } catch {}
+}
+
+/* ──────────────────────────────────────────────
+   METRICS (Trend Aramalar)
+────────────────────────────────────────────── */
+export type BookSearchMetric = {
+  $id: string;
+  searchTerm: string;
+  count: number;
+  poster_url: string;
+  title: string;
+  kitap_id_str: string;
+  $createdAt?: string;
 };
 
-function normalizeBook(b: any): { id: string; title: string; poster: string } {
-  const id = String(b?.id ?? "");
-  const title = b?.volumeInfo?.title ?? b?.title ?? "Unknown";
-  const poster =
-    b?.volumeInfo?.imageLinks?.thumbnail ||
-    b?.volumeInfo?.imageLinks?.smallThumbnail ||
-    b?.image ||
-    FALLBACK_POSTER;
-
-  // Google bazen http verir; güvenli olması için https'e çevir
-  const safePoster =
-    typeof poster === "string"
-      ? poster.replace(/^http:/, "https:")
-      : FALLBACK_POSTER;
-
-  return { id, title, poster: safePoster };
-}
-
-/** Tablo tipin (Columns sekline göre) */
-export interface BookSearchMetric {
-  $id: string;
-  searchTerm: string; // required (Text)
-  count: number; // required (Integer, default 0)
-  poster_url: string; // required (URL/Text)
-  kitap_id_str: string; // required (Text)  ← kitap_id yerine bunu kullanıyoruz
-  title: string; // required (Text)
-}
-
-/** Arama sayacını artır / yoksa oluştur */
-export const updateSearchCount = async (query: string, book: GBItemLoose) => {
+export async function updateSearchCount(query: string, book: Book) {
   try {
-    const meta = normalizeBook(book);
+    const meta = normalizeForMetrics(book);
 
-    // 1) Bu terim var mı?
-    const found = await databases.listDocuments(DATABASE_ID, TABLE_ID, [
+    const res = await databases.listDocuments(DATABASE_ID, METRICS_TABLE_ID, [
       Query.equal("searchTerm", query),
+      Query.limit(1),
     ]);
 
-    if (found.documents.length > 0) {
-      // 2) Varsa → count++
-      const doc = found.documents[0] as unknown as BookSearchMetric;
-      await databases.updateDocument(DATABASE_ID, TABLE_ID, doc.$id, {
+    if (res.total > 0) {
+      const doc = res.documents[0] as any;
+      await databases.updateDocument(DATABASE_ID, METRICS_TABLE_ID, doc.$id, {
         count: (doc.count ?? 0) + 1,
-        // istersen poster/title da güncellenebilir
       });
       return;
     }
 
-    // 3) Yoksa → yeni belge (required alanların tamamı gönderilmeli)
-    await databases.createDocument(DATABASE_ID, TABLE_ID, ID.unique(), {
+    await databases.createDocument(DATABASE_ID, METRICS_TABLE_ID, ID.unique(), {
       searchTerm: query,
       count: 1,
       poster_url: meta.poster,
-      kitap_id_str: meta.id,
       title: meta.title,
+      kitap_id_str: meta.id,
     });
-  } catch (error) {
-    console.error("updateSearchCount failed:", error);
+  } catch (err) {
+    console.error("updateSearchCount failed:", err);
   }
-};
+}
 
-/** En çok aranan ilk 5 */
-export const getTrendingSearches = async (): Promise<BookSearchMetric[]> => {
+export async function getTrendingSearches(
+  limit = 12
+): Promise<BookSearchMetric[]> {
   try {
-    const res = await databases.listDocuments(DATABASE_ID, TABLE_ID, [
+    const res = await databases.listDocuments(DATABASE_ID, METRICS_TABLE_ID, [
       Query.orderDesc("count"),
-      Query.limit(5),
+      Query.limit(limit),
     ]);
     return res.documents as unknown as BookSearchMetric[];
-  } catch (error) {
-    console.error("getTrendingSearches failed:", error);
+  } catch (err) {
+    console.error("getTrendingSearches failed:", err);
     return [];
   }
+}
+
+/* ──────────────────────────────────────────────
+   SAVED TABLOSU (Kullanıcıya özel kayıtlar)
+────────────────────────────────────────────── */
+export type SavedDoc = {
+  $id: string;
+  userId: string;
+  bookId: string;
+  title: string;
+  cover_url?: string | null;
+  published_year?: string | null;
+  $createdAt?: string;
 };
 
-export { client };
+export async function saveBookForUser(
+  userId: string,
+  book: Book
+): Promise<SavedDoc> {
+  // 1️⃣ Aynısı var mı?
+  const existsRes = (await databases.listDocuments(
+    DATABASE_ID,
+    SAVED_TABLE_ID,
+    [Query.equal("userId", userId), Query.equal("bookId", String(book.id))]
+  )) as any;
+
+  const normalizedCover = httpsify(book.cover_url ?? null) || PLACEHOLDER;
+
+  if (existsRes.total > 0) {
+    const ex = existsRes.documents[0] as any;
+    const doc: SavedDoc = {
+      $id: ex.$id,
+      userId: ex.userId,
+      bookId: ex.bookId,
+      title: ex.title,
+      cover_url: ex.cover_url ?? null,
+      published_year: ex.published_year ?? null,
+      $createdAt: ex.$createdAt,
+    };
+
+    const needsUpdate =
+      !doc.cover_url ||
+      doc.cover_url.includes("placehold.co") ||
+      doc.cover_url.startsWith("http://");
+
+    if (needsUpdate) {
+      await databases.updateDocument(DATABASE_ID, SAVED_TABLE_ID, doc.$id, {
+        cover_url: normalizedCover,
+        title: book.title ?? doc.title,
+        published_year: book.published_year ?? doc.published_year ?? null,
+      } as any);
+      return {
+        ...doc,
+        cover_url: normalizedCover,
+        title: book.title ?? doc.title,
+        published_year: book.published_year ?? doc.published_year ?? null,
+      };
+    }
+
+    return doc;
+  }
+
+  // 2️⃣ Yoksa oluştur
+  const permissions = [
+    Permission.read(Role.user(userId)),
+    Permission.update(Role.user(userId)),
+    Permission.delete(Role.user(userId)),
+  ];
+
+  const createdRes = (await databases.createDocument(
+    DATABASE_ID,
+    SAVED_TABLE_ID,
+    ID.unique(),
+    {
+      userId,
+      bookId: String(book.id),
+      title: book.title ?? "Adsız kitap",
+      cover_url: normalizedCover,
+      published_year: book.published_year ?? null,
+    } as any,
+    permissions
+  )) as any;
+
+  return {
+    $id: createdRes.$id,
+    userId: createdRes.userId,
+    bookId: createdRes.bookId,
+    title: createdRes.title,
+    cover_url: createdRes.cover_url ?? null,
+    published_year: createdRes.published_year ?? null,
+    $createdAt: createdRes.$createdAt,
+  } as SavedDoc;
+}
+
+/** Kullanıcının kayıtlı kitaplarını getir */
+export async function getSavedBooks(userId: string): Promise<SavedDoc[]> {
+  const res = (await databases.listDocuments(DATABASE_ID, SAVED_TABLE_ID, [
+    Query.equal("userId", userId),
+    Query.orderDesc("$createdAt"),
+    Query.limit(200),
+  ])) as any;
+  return res.documents as unknown as SavedDoc[];
+}
+
+/** Tek kayıt sil */
+export async function removeSaved(
+  userId: string,
+  bookId: string
+): Promise<void> {
+  const res = (await databases.listDocuments(DATABASE_ID, SAVED_TABLE_ID, [
+    Query.equal("userId", userId),
+    Query.equal("bookId", String(bookId)),
+    Query.limit(1),
+  ])) as any;
+  if (res.total > 0) {
+    await databases.deleteDocument(
+      DATABASE_ID,
+      SAVED_TABLE_ID,
+      res.documents[0].$id
+    );
+  }
+}
+
+/** Tüm kayıtları temizle */
+export async function clearAllSaved(userId: string): Promise<void> {
+  const res = (await databases.listDocuments(DATABASE_ID, SAVED_TABLE_ID, [
+    Query.equal("userId", userId),
+    Query.limit(500),
+  ])) as any;
+  await Promise.all(
+    res.documents.map((d: any) =>
+      databases.deleteDocument(DATABASE_ID, SAVED_TABLE_ID, d.$id)
+    )
+  );
+}
